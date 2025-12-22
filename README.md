@@ -52,15 +52,9 @@ Find collaborators filtered by relationship type with configurable result limits
 
 The app supports the following Rovo agent conversation starters:
 
-- "get the organizational tree for a user"
-- "what is the org structure for a user"
-- "show me the org tree for a user"
-- "get position details for a user"
-- "what is the job title for a user"
-- "show me position information for a user"
-- "show me all the details for a user"
-- "find collaborators for a user"
-- "get my peers and managers and direct reports"
+ - get the organizational tree for a user
+ - show me all the details for a user
+ - find collaborators for a user
 
 ## Architecture
 
@@ -81,7 +75,7 @@ The app supports the following Rovo agent conversation starters:
 
 #### GraphQL Endpoint
 ```
-https://one-atlas-jevs.atlassian.net/gateway/api/graphql
+https://[your-atlassian-hostname].atlassian.net/gateway/api/graphql
 ```
 
 #### Main Functions
@@ -121,13 +115,24 @@ https://one-atlas-jevs.atlassian.net/gateway/api/graphql
    forge variables set TALENT_API_TOKEN <your-api-token>
    forge variables set TALENT_AUTH_EMAIL <your-email>
    ```
-
-4. **Deploy the app**:
+4. **Set the Talent API endpoints**:
+   in manifest.yml
+   ```
+     external:
+      fetch:
+       backend:
+        - address: https://[your-atlassian-hostname].atlassian.net/gateway/api/graphql
+   ```
+   in src/index.js
+   ```
+     const TALENT_GRAPHQL_ENDPOINT = 'https://[your-atlassian-hostname].atlassian.net/gateway/api/graphql';
+   ```
+5. **Deploy the app**:
    ```bash
    forge deploy --non-interactive -e development
    ```
 
-5. **Install on your Jira site**:
+6. **Install on your Jira site**:
    ```bash
    forge install --non-interactive --upgrade --site <your-site-url> --product jira --environment development
    ```
