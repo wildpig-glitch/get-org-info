@@ -116,14 +116,14 @@ https://[your-atlassian-hostname].atlassian.net/gateway/api/graphql
    forge variables set TALENT_AUTH_EMAIL <your-email>
    ```
 4. **Set the Talent API endpoints**:
-   in manifest.yml
+   - in manifest.yml
    ```
      external:
       fetch:
        backend:
         - address: https://[your-atlassian-hostname].atlassian.net/gateway/api/graphql
    ```
-   in src/index.js
+   - in src/index.js
    ```
      const TALENT_GRAPHQL_ENDPOINT = 'https://[your-atlassian-hostname].atlassian.net/gateway/api/graphql';
    ```
@@ -266,16 +266,9 @@ forge logs -e development --since 10m
 
 For more information about:
 - **Atlassian Forge**: https://developer.atlassian.com/cloud/forge/
-- **Talent GraphQL API**: Contact Atlassian support
+- **Talent GraphQL API**: https://developer.atlassian.com/platform/atlassian-graphql-api/graphql/#overview
 - **Rovo Agent**: https://developer.atlassian.com/cloud/rovo/
 
-## License
-
-This project is provided as-is for use with Atlassian Forge and Jira.
-
-## Author
-
-Created for organizational data retrieval and collaboration management within Jira.
 
 ## Changelog
 
