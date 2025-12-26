@@ -1,9 +1,8 @@
 import api, { route } from '@forge/api';
 
 // Hard-coded GraphQL endpoint for Talent API
-//const TALENT_GRAPHQL_ENDPOINT = 'https://one-atlas-jevs.atlassian.net/gateway/api/graphql';
-//const TALENT_GRAPHQL_ENDPOINT = 'https://sk-demo-site.atlassian.net/gateway/api/graphql';
-const TALENT_GRAPHQL_ENDPOINT = 'https://one-atlas-dohi.atlassian.net/gateway/api/graphql';
+const TALENT_GRAPHQL_ENDPOINT = 'https://one-atlas-jevs.atlassian.net/gateway/api/graphql';
+console.log('DEBUG: Talent GraphQL Endpoint initialized:', TALENT_GRAPHQL_ENDPOINT);
 
 /**
  * Create a Basic Authentication header for the Talent GraphQL API.
@@ -80,8 +79,9 @@ async function queryTalentGraphQL(userEmail, cloudId, authEmail, apiToken) {
   };
   
   try {
-    console.log('DEBUG: Making GraphQL request to:', TALENT_GRAPHQL_ENDPOINT);
-    console.log('DEBUG: GraphQL variables:', JSON.stringify(variables, null, 2));
+    console.log('📡 DEBUG: Making GraphQL request');
+    console.log('📡 DEBUG: Talent GraphQL Endpoint:', TALENT_GRAPHQL_ENDPOINT);
+    console.log('📡 DEBUG: GraphQL variables:', JSON.stringify(variables, null, 2));
     
     // Create Basic Auth header with email and API token
     const authHeader = createBasicAuthHeader(authEmail, apiToken);
@@ -476,7 +476,8 @@ export async function getOrgTree(request) {
     };
     
     try {
-      console.log('DEBUG: Querying direct reports for position UUID:', userPositionUUID);
+      console.log('📡 DEBUG: Querying direct reports for position UUID:', userPositionUUID);
+      console.log('📡 DEBUG: Using Talent GraphQL Endpoint:', TALENT_GRAPHQL_ENDPOINT);
       
       // Create Basic Auth header for the request
       const authHeader = createBasicAuthHeader(authEmail, apiToken);
@@ -600,7 +601,8 @@ export async function getOrgTree(request) {
       };
       
       try {
-        console.log('DEBUG: Querying peers for direct manager UUID:', directManagerPositionUUID);
+        console.log('📡 DEBUG: Querying peers for direct manager UUID:', directManagerPositionUUID);
+        console.log('📡 DEBUG: Using Talent GraphQL Endpoint:', TALENT_GRAPHQL_ENDPOINT);
         
         // Create Basic Auth header for the request
         const authHeader = createBasicAuthHeader(authEmail, apiToken);
