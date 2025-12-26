@@ -124,3 +124,4 @@ permissions:
       backend:
         - address: https://one-atlas-jevs.atlassian.net
         - address: https://sk-demo-site.atlassian.net
+        - address: https://one-atlas-dohi.atlassian.net

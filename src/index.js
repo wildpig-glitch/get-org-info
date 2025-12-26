@@ -2,7 +2,8 @@ import api, { route } from '@forge/api';
 
 // Hard-coded GraphQL endpoint for Talent API
 //const TALENT_GRAPHQL_ENDPOINT = 'https://one-atlas-jevs.atlassian.net/gateway/api/graphql';
-const TALENT_GRAPHQL_ENDPOINT = 'https://sk-demo-site.atlassian.net/gateway/api/graphql';
+//const TALENT_GRAPHQL_ENDPOINT = 'https://sk-demo-site.atlassian.net/gateway/api/graphql';
+const TALENT_GRAPHQL_ENDPOINT = 'https://one-atlas-dohi.atlassian.net/gateway/api/graphql';
 
 /**
  * Create a Basic Authentication header for the Talent GraphQL API.
