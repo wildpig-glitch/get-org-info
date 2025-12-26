@@ -1,8 +1,46 @@
 import api, { route } from '@forge/api';
 
-// Hard-coded GraphQL endpoint for Talent API
-const TALENT_GRAPHQL_ENDPOINT = 'https://one-atlas-jevs.atlassian.net/gateway/api/graphql';
-console.log('DEBUG: Talent GraphQL Endpoint initialized:', TALENT_GRAPHQL_ENDPOINT);
+/**
+ * Extract the Atlassian site domain from the request context.
+ * The tenant URL is in the format: https://[site-domain].atlassian.net/...
+ * We extract just the [site-domain].atlassian.net part
+ * 
+ * @param {Object} request - The request object containing context
+ * @returns {string} The site domain (e.g., "sk-demo-site.atlassian.net")
+ */
+function extractSiteDomain(request) {
+  const jiraUrl = request?.context?.jira?.url;
+  
+  if (jiraUrl) {
+    // Extract domain from URL like https://sk-demo-site.atlassian.net/browse/...
+    const match = jiraUrl.match(/https?:\/\/([^\/]+)/);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  
+  // Fallback to tenantUrl if available
+  const tenantUrl = request?.context?.tenantUrl;
+  if (tenantUrl) {
+    const match = tenantUrl.match(/https?:\/\/([^\/]+)/);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  
+  // Default fallback
+  return 'one-atlas-jevs.atlassian.net';
+}
+
+/**
+ * Build the Talent GraphQL endpoint URL based on the site domain.
+ * 
+ * @param {string} siteDomain - The Atlassian site domain
+ * @returns {string} The full Talent GraphQL endpoint URL
+ */
+function buildTalentGraphQLEndpoint(siteDomain) {
+  return `https://${siteDomain}/gateway/api/graphql`;
+}
 
 /**
  * Create a Basic Authentication header for the Talent GraphQL API.
@@ -29,11 +67,12 @@ function createBasicAuthHeader(email, apiToken) {
  * 
  * @param {string} userEmail - The email address of the user to query
  * @param {string} cloudId - The Atlassian cloud ID
- * @param {string> authEmail - The email address for Basic Auth
+ * @param {string} authEmail - The email address for Basic Auth
  * @param {string} apiToken - The API token for Basic Auth
+ * @param {string} talentGraphQLEndpoint - The Talent GraphQL API endpoint URL
  * @returns {Promise<Object>} The user's position data and organizational relationships
  */
-async function queryTalentGraphQL(userEmail, cloudId, authEmail, apiToken) {
+async function queryTalentGraphQL(userEmail, cloudId, authEmail, apiToken, talentGraphQLEndpoint) {
   const query = `
     query positionsSearchQuery($cloudId: ID!, $fieldIdIsIn: [ID!], $first: Int = 100, $rql: String) {
       radar_positionsSearch(
@@ -80,7 +119,7 @@ async function queryTalentGraphQL(userEmail, cloudId, authEmail, apiToken) {
   
   try {
     console.log('📡 DEBUG: Making GraphQL request');
-    console.log('📡 DEBUG: Talent GraphQL Endpoint:', TALENT_GRAPHQL_ENDPOINT);
+    console.log('📡 DEBUG: Talent GraphQL Endpoint:', talentGraphQLEndpoint);
     console.log('📡 DEBUG: GraphQL variables:', JSON.stringify(variables, null, 2));
     
     // Create Basic Auth header with email and API token
@@ -88,7 +127,7 @@ async function queryTalentGraphQL(userEmail, cloudId, authEmail, apiToken) {
     
     // Use fetch API which is available in Forge Node.js resolvers
     // to make HTTP requests to external APIs
-    const response = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+    const response = await fetch(talentGraphQLEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -146,9 +185,10 @@ async function queryTalentGraphQL(userEmail, cloudId, authEmail, apiToken) {
  * @param {string} cloudId - The Atlassian cloud ID
  * @param {string} authEmail - The email address for Basic Auth
  * @param {string} apiToken - The API token for Basic Auth
+ * @param {string} talentGraphQLEndpoint - The Talent GraphQL API endpoint URL
  * @returns {Promise<Array>} Array of manager objects with uuid and preferredName
  */
-async function fetchManagerDetails(managerUUIDs, cloudId, authEmail, apiToken) {
+async function fetchManagerDetails(managerUUIDs, cloudId, authEmail, apiToken, talentGraphQLEndpoint) {
   if (!managerUUIDs || managerUUIDs.length === 0) {
     return [];
   }
@@ -196,7 +236,7 @@ async function fetchManagerDetails(managerUUIDs, cloudId, authEmail, apiToken) {
       
       const authHeader = createBasicAuthHeader(authEmail, apiToken);
       
-      const response = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+      const response = await fetch(talentGraphQLEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -371,9 +411,15 @@ export async function getOrgTree(request) {
       };
     }
     
+    // Build the Talent GraphQL endpoint based on the site domain
+    const siteDomain = extractSiteDomain(request);
+    const talentGraphQLEndpoint = buildTalentGraphQLEndpoint(siteDomain);
+    console.log('DEBUG: Site domain:', siteDomain);
+    console.log('DEBUG: Talent GraphQL endpoint:', talentGraphQLEndpoint);
+    
     // Query for the user's position and manager information
     console.log('DEBUG: Querying Talent GraphQL API for user position data');
-    const userPositionData = await queryTalentGraphQL(userEmail, cloudId, authEmail, apiToken);
+    const userPositionData = await queryTalentGraphQL(userEmail, cloudId, authEmail, apiToken, talentGraphQLEndpoint);
     console.log('DEBUG: User position data received:', JSON.stringify(userPositionData, null, 2));
     
     // Validate that userPositionData and radar_positionsSearch exist
@@ -477,13 +523,13 @@ export async function getOrgTree(request) {
     
     try {
       console.log('📡 DEBUG: Querying direct reports for position UUID:', userPositionUUID);
-      console.log('📡 DEBUG: Using Talent GraphQL Endpoint:', TALENT_GRAPHQL_ENDPOINT);
+      console.log('📡 DEBUG: Using Talent GraphQL Endpoint:', talentGraphQLEndpoint);
       
       // Create Basic Auth header for the request
       const authHeader = createBasicAuthHeader(authEmail, apiToken);
       
       // Use fetch API to make HTTP requests to the Talent GraphQL API
-      const directReportsResponse = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+      const directReportsResponse = await fetch(talentGraphQLEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -602,13 +648,13 @@ export async function getOrgTree(request) {
       
       try {
         console.log('📡 DEBUG: Querying peers for direct manager UUID:', directManagerPositionUUID);
-        console.log('📡 DEBUG: Using Talent GraphQL Endpoint:', TALENT_GRAPHQL_ENDPOINT);
+        console.log('📡 DEBUG: Using Talent GraphQL Endpoint:', talentGraphQLEndpoint);
         
         // Create Basic Auth header for the request
         const authHeader = createBasicAuthHeader(authEmail, apiToken);
         
         // Use fetch API to make HTTP requests to the Talent GraphQL API
-        const peersResponse = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+        const peersResponse = await fetch(talentGraphQLEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -776,9 +822,15 @@ export async function getPositionDetails(request) {
       rql: `workerEmail = '${userEmail}'`
     };
     
+    // Build the Talent GraphQL endpoint based on the site domain
+    const siteDomain = extractSiteDomain(request);
+    const talentGraphQLEndpoint = buildTalentGraphQLEndpoint(siteDomain);
+    console.log('DEBUG: Site domain:', siteDomain);
+    console.log('DEBUG: Talent GraphQL endpoint:', talentGraphQLEndpoint);
+    
     const authHeader = createBasicAuthHeader(authEmail, apiToken);
     
-    const response = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+    const response = await fetch(talentGraphQLEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -946,9 +998,15 @@ export async function getAllUserDetails(request) {
       rql: `workerEmail = '${userEmail}'`
     };
     
+    // Build the Talent GraphQL endpoint based on the site domain
+    const siteDomain = extractSiteDomain(request);
+    const talentGraphQLEndpoint = buildTalentGraphQLEndpoint(siteDomain);
+    console.log('DEBUG: Site domain:', siteDomain);
+    console.log('DEBUG: Talent GraphQL endpoint:', talentGraphQLEndpoint);
+    
     const authHeader = createBasicAuthHeader(authEmail, apiToken);
     
-    const response = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+    const response = await fetch(talentGraphQLEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
