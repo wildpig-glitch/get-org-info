@@ -1,21 +1,61 @@
-import api from '@forge/api';
+import api, { route } from '@forge/api';
 
 /**
- * Execute a GraphQL query against the Atlassian GraphQL Gateway for the site
- * the app is installed on. Uses api.asApp().requestGraph() which automatically
- * handles authentication and routes to the correct site — no hardcoded URLs needed.
+ * Dynamically resolve the base URL of the Atlassian site this app is installed on.
+ * Uses the Jira serverInfo REST API via api.asApp().requestJira() which always
+ * targets the correct installed site — no hardcoded URLs or fallbacks.
+ *
+ * @returns {Promise<string>} The base URL e.g. "https://my-site.atlassian.net"
+ */
+async function getSiteBaseUrl() {
+  const response = await api.asApp().requestJira(route`/rest/api/2/serverInfo`);
+  const data = await response.json();
+  console.log('DEBUG: serverInfo baseUrl:', data.baseUrl);
+  if (!data.baseUrl) {
+    throw new Error('Could not determine site base URL from serverInfo');
+  }
+  // Strip any trailing slash
+  return data.baseUrl.replace(/\/$/, '');
+}
+
+/**
+ * Create a Basic Authentication header for the Talent GraphQL API.
+ * The API requires Basic Auth with email:api_token in Base64 format.
+ *
+ * @param {string} email - The Atlassian account email
+ * @param {string} apiToken - The Atlassian API token
+ * @returns {string} The Authorization header value for Basic auth
+ */
+function createBasicAuthHeader(email, apiToken) {
+  // Combine email and API token as "email:api_token" and Base64 encode
+  const credentials = `${email}:${apiToken}`;
+  const encodedCredentials = Buffer.from(credentials).toString('base64');
+  return `Basic ${encodedCredentials}`;
+}
+
+/**
+ * Execute a GraphQL query against the Talent (Radar) GraphQL API.
+ * Uses Basic Auth (required by the radar_positionsSearch field — OAuth is not supported).
+ * The endpoint is dynamically resolved from the installed site — no hardcoded URLs.
  *
  * @param {string} query - The GraphQL query string
  * @param {Object} variables - The GraphQL variables
+ * @param {string} authHeader - The Basic Auth header value
+ * @param {string} talentGraphQLEndpoint - The full GraphQL endpoint URL
  * @returns {Promise<Object>} The data property of the GraphQL response
  */
-async function queryTalentGraphQL(query, variables) {
-  console.log('📡 DEBUG: Making GraphQL request via api.asApp().requestGraph()');
+async function queryTalentGraphQL(query, variables, authHeader, talentGraphQLEndpoint) {
+  console.log('📡 DEBUG: Making GraphQL request to:', talentGraphQLEndpoint);
   console.log('📡 DEBUG: GraphQL variables:', JSON.stringify(variables, null, 2));
 
-  // requestGraph automatically uses the site the app is installed on and handles auth.
-  // The @optIn directive in the query handles the RadarPositionsSearch opt-in.
-  const response = await api.asApp().requestGraph(query, variables);
+  const response = await fetch(talentGraphQLEndpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': authHeader
+    },
+    body: JSON.stringify({ query, variables })
+  });
 
   console.log('DEBUG: GraphQL response status:', response.status);
   const responseText = await response.text();
@@ -33,7 +73,7 @@ async function queryTalentGraphQL(query, variables) {
   console.log('DEBUG: GraphQL response data:', JSON.stringify(data, null, 2));
 
   if (data.errors) {
-    const errorMsg = `GraphQL error: ${JSON.stringify(data.errors)}`;
+    const errorMsg = `Failed to query Talent GraphQL API: GraphQL error: ${JSON.stringify(data.errors)}`;
     console.error('ERROR:', errorMsg);
     throw new Error(errorMsg);
   }
@@ -49,13 +89,13 @@ async function queryTalentGraphQL(query, variables) {
 
 /**
  * Fetch manager details for a list of position UUIDs.
- * Queries the Talent GraphQL API via requestGraph for each UUID in the hierarchy.
+ * Queries the Talent GraphQL API via Basic Auth for each UUID in the hierarchy.
  *
  * @param {Array<string>} managerUUIDs - Array of manager position UUIDs
  * @param {string} cloudId - The Atlassian cloud ID
  * @returns {Promise<Array>} Array of manager objects with uuid and preferredName
  */
-async function fetchManagerDetails(managerUUIDs, cloudId) {
+async function fetchManagerDetails(managerUUIDs, cloudId, authHeader, talentGraphQLEndpoint) {
   if (!managerUUIDs || managerUUIDs.length === 0) {
     return [];
   }
@@ -98,7 +138,7 @@ async function fetchManagerDetails(managerUUIDs, cloudId) {
         fieldIdIsIn: ['positionWorker'],
         first: 100,
         rql: `id = '${uuid}'`
-      });
+      }, authHeader, talentGraphQLEndpoint);
 
       if (data?.radar_positionsSearch?.edges?.length > 0) {
         const edge = data.radar_positionsSearch.edges[0];
@@ -193,6 +233,14 @@ export async function getOrgTree(request) {
   console.log('📥 Received payload:', JSON.stringify(request, null, 2));
 
   try {
+    // Retrieve API credentials from Forge environment variables (set via `forge variables set`)
+    const apiToken = process.env.TALENT_API_TOKEN;
+    const authEmail = process.env.TALENT_AUTH_EMAIL;
+
+    if (!apiToken || !authEmail) {
+      return { type: 'error', message: 'API credentials (TALENT_API_TOKEN / TALENT_AUTH_EMAIL) are not configured.' };
+    }
+
     // Extract user email from the request.
     // Rovo actions pass inputs directly on the request object.
     const userEmail = request?.userEmail;
@@ -209,6 +257,13 @@ export async function getOrgTree(request) {
     if (!cloudId) {
       return { type: 'error', message: 'Cloud ID is required.' };
     }
+
+    // Dynamically resolve the site base URL from the Jira serverInfo API.
+    // This ensures we always query the correct site — no hardcoded URLs or fallbacks.
+    const siteBaseUrl = await getSiteBaseUrl();
+    const talentGraphQLEndpoint = `${siteBaseUrl}/gateway/api/graphql`;
+    const authHeader = createBasicAuthHeader(authEmail, apiToken);
+    console.log('DEBUG: Talent GraphQL endpoint:', talentGraphQLEndpoint);
 
     // Build the query to retrieve the user's position, manager hierarchy, and peers.
     const userPositionQuery = `
@@ -245,14 +300,13 @@ export async function getOrgTree(request) {
     `;
 
     // Query for the user's position and manager information.
-    // requestGraph routes automatically to the site the app is installed on.
     console.log('DEBUG: Querying Talent GraphQL API for user position data');
     const userPositionData = await queryTalentGraphQL(userPositionQuery, {
       cloudId,
       fieldIdIsIn: ['workerEmail', 'positionWorker', 'positionReportingLine'],
       first: 100,
       rql: `workerEmail = '${userEmail}'`
-    });
+    }, authHeader, talentGraphQLEndpoint);
     console.log('DEBUG: User position data received:', JSON.stringify(userPositionData, null, 2));
     
     // Validate that userPositionData and radar_positionsSearch exist
@@ -357,8 +411,7 @@ export async function getOrgTree(request) {
     try {
       console.log('📡 DEBUG: Querying direct reports for position UUID:', userPositionUUID);
 
-      // Use queryTalentGraphQL which uses requestGraph — no manual auth or URL needed
-      const directReportsData = await queryTalentGraphQL(directReportsQuery, directReportsVariables);
+      const directReportsData = await queryTalentGraphQL(directReportsQuery, directReportsVariables, authHeader, talentGraphQLEndpoint);
 
       if (directReportsData?.radar_positionsSearch?.edges) {
         directReports = directReportsData.radar_positionsSearch.edges
@@ -383,7 +436,7 @@ export async function getOrgTree(request) {
       try {
         const managerUUIDs = managerHierarchy.map(m => m.uuid);
         console.log('DEBUG: Fetching details for managers:', managerUUIDs);
-        populatedManagerHierarchy = await fetchManagerDetails(managerUUIDs, cloudId);
+        populatedManagerHierarchy = await fetchManagerDetails(managerUUIDs, cloudId, authHeader, talentGraphQLEndpoint);
         console.log('DEBUG: Populated manager hierarchy:', JSON.stringify(populatedManagerHierarchy, null, 2));
       } catch (error) {
         console.error('ERROR: Error fetching manager details:', error.message);
@@ -445,8 +498,7 @@ export async function getOrgTree(request) {
       try {
         console.log('📡 DEBUG: Querying peers for direct manager UUID:', directManagerPositionUUID);
 
-        // Use queryTalentGraphQL which uses requestGraph — no manual auth or URL needed
-        const peersData = await queryTalentGraphQL(peersQuery, peersVariables);
+        const peersData = await queryTalentGraphQL(peersQuery, peersVariables, authHeader, talentGraphQLEndpoint);
 
         if (peersData?.radar_positionsSearch?.edges) {
           peers = peersData.radar_positionsSearch.edges
@@ -517,6 +569,12 @@ export async function getPositionDetails(request) {
       return { type: 'error', message: 'Cloud ID is required.' };
     }
 
+    // Dynamically resolve the site base URL — no hardcoded URLs or fallbacks
+    const siteBaseUrl = await getSiteBaseUrl();
+    const talentGraphQLEndpoint = `${siteBaseUrl}/gateway/api/graphql`;
+    const authHeader = createBasicAuthHeader(authEmail, apiToken);
+    console.log('DEBUG: Talent GraphQL endpoint:', talentGraphQLEndpoint);
+
     console.log('DEBUG: Querying position details for user:', userEmail);
 
     // Query for all position detail fields for the given user email
@@ -553,13 +611,12 @@ export async function getPositionDetails(request) {
       }
     `;
 
-    // Use queryTalentGraphQL which uses requestGraph — automatically targets the installed site
     const data = await queryTalentGraphQL(query, {
       cloudId,
       fieldIdIsIn: ['workerEmail', 'positionWorker', 'positionJobFamily', 'positionLevel', 'positionJobTitle', 'positionRole', 'positionPositionTitle', 'positionKey'],
       first: 100,
       rql: `workerEmail = '${userEmail}'`
-    });
+    }, authHeader, talentGraphQLEndpoint);
 
     if (!data?.radar_positionsSearch?.edges || data.radar_positionsSearch.edges.length === 0) {
       return {
@@ -646,6 +703,12 @@ export async function getAllUserDetails(request) {
       return { type: 'error', message: 'Cloud ID is required.' };
     }
 
+    // Dynamically resolve the site base URL — no hardcoded URLs or fallbacks
+    const siteBaseUrl = await getSiteBaseUrl();
+    const talentGraphQLEndpoint = `${siteBaseUrl}/gateway/api/graphql`;
+    const authHeader = createBasicAuthHeader(authEmail, apiToken);
+    console.log('DEBUG: Talent GraphQL endpoint:', talentGraphQLEndpoint);
+
     console.log('DEBUG: Querying all details for user:', userEmail);
 
     // Query for all position details including the reporting line (manager hierarchy)
@@ -682,13 +745,12 @@ export async function getAllUserDetails(request) {
       }
     `;
 
-    // Use queryTalentGraphQL which uses requestGraph — automatically targets the installed site
     const data = await queryTalentGraphQL(query, {
       cloudId,
       fieldIdIsIn: ['workerEmail', 'positionWorker', 'positionReportingLine', 'positionJobFamily', 'positionLevel', 'positionJobTitle', 'positionRole', 'positionPositionTitle', 'positionKey'],
       first: 100,
       rql: `workerEmail = '${userEmail}'`
-    });
+    }, authHeader, talentGraphQLEndpoint);
 
     if (!data?.radar_positionsSearch?.edges || data.radar_positionsSearch.edges.length === 0) {
       return {
@@ -747,7 +809,7 @@ export async function getAllUserDetails(request) {
     if (managerHierarchy.length > 0) {
       try {
         const managerUUIDs = managerHierarchy.map(m => m.uuid);
-        populatedManagerHierarchy = await fetchManagerDetails(managerUUIDs, cloudId);
+        populatedManagerHierarchy = await fetchManagerDetails(managerUUIDs, cloudId, authHeader, talentGraphQLEndpoint);
       } catch (error) {
         console.error('ERROR: Error fetching manager details:', error.message);
       }
@@ -792,7 +854,7 @@ export async function getAllUserDetails(request) {
         fieldIdIsIn: ['workerEmail', 'positionWorker'],
         first: 100,
         rql: `manager = '${userPositionUUID}'`
-      });
+      }, authHeader, talentGraphQLEndpoint);
 
       if (directReportsData?.radar_positionsSearch?.edges) {
         directReports = directReportsData.radar_positionsSearch.edges
@@ -861,7 +923,7 @@ export async function getAllUserDetails(request) {
       };
       
       try {
-        const peersData = await queryTalentGraphQL(peersQuery, peersVariables);
+        const peersData = await queryTalentGraphQL(peersQuery, peersVariables, authHeader, talentGraphQLEndpoint);
 
         if (peersData?.radar_positionsSearch?.edges) {
           peers = peersData.radar_positionsSearch.edges
@@ -1063,8 +1125,12 @@ export async function getCollaborators(request) {
         rql: `workerEmail = '${userEmail}'`
       };
       
-      // Use queryTalentGraphQL which uses requestGraph — automatically targets the installed site
-      const data = await queryTalentGraphQL(query, variables);
+      // Dynamically resolve the site base URL — no hardcoded URLs or fallbacks
+      const siteBaseUrl = await getSiteBaseUrl();
+      const talentGraphQLEndpoint = `${siteBaseUrl}/gateway/api/graphql`;
+      const authHeader = createBasicAuthHeader(authEmail, apiToken);
+
+      const data = await queryTalentGraphQL(query, variables, authHeader, talentGraphQLEndpoint);
 
       if (!data?.radar_positionsSearch?.edges || data.radar_positionsSearch.edges.length === 0) {
         return {
@@ -1101,7 +1167,7 @@ export async function getCollaborators(request) {
         
         // Fetch manager details with position titles
         try {
-          collaborators = await fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId);
+          collaborators = await fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId, authHeader, talentGraphQLEndpoint);
         } catch (error) {
           console.error('ERROR: Error fetching manager details:', error.message);
           return {
@@ -1119,9 +1185,9 @@ export async function getCollaborators(request) {
       }
 
       if (relationship === 'direct_reports') {
-        collaborators = await getCollaboratorsList(userEmail, 'direct_reports', cloudId);
+        collaborators = await getCollaboratorsList(userEmail, 'direct_reports', cloudId, authHeader, talentGraphQLEndpoint);
       } else if (relationship === 'peers') {
-        collaborators = await getCollaboratorsList(userEmail, 'peers', cloudId);
+        collaborators = await getCollaboratorsList(userEmail, 'peers', cloudId, authHeader, talentGraphQLEndpoint);
       }
     }
     
@@ -1166,7 +1232,7 @@ export async function getCollaborators(request) {
 /**
  * Helper function to fetch manager details including position title.
  */
-async function fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId) {
+async function fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId, authHeader, talentGraphQLEndpoint) {
   const managers = [];
 
   const query = `
@@ -1203,13 +1269,12 @@ async function fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId) {
     try {
       const uuid = managerData.uuid;
 
-      // Use queryTalentGraphQL which uses requestGraph — automatically targets the installed site
       const data = await queryTalentGraphQL(query, {
         cloudId,
         fieldIdIsIn: ['positionWorker', 'positionPositionTitle'],
         first: 100,
         rql: `id = '${uuid}'`
-      });
+      }, authHeader, talentGraphQLEndpoint);
 
       if (data?.radar_positionsSearch?.edges?.length > 0) {
         const edge = data.radar_positionsSearch.edges[0];
@@ -1238,7 +1303,7 @@ async function fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId) {
 /**
  * Helper function to retrieve collaborators list (direct reports or peers) with position titles.
  */
-async function getCollaboratorsList(userEmail, relationshipType, cloudId) {
+async function getCollaboratorsList(userEmail, relationshipType, cloudId, authHeader, talentGraphQLEndpoint) {
   const collaborators = [];
 
   try {
@@ -1267,13 +1332,12 @@ async function getCollaboratorsList(userEmail, relationshipType, cloudId) {
       }
     `;
 
-    // Use queryTalentGraphQL which uses requestGraph — automatically targets the installed site
     const userData = await queryTalentGraphQL(userQuery, {
       cloudId,
       fieldIdIsIn: ['positionReportingLine'],
       first: 100,
       rql: `workerEmail = '${userEmail}'`
-    });
+    }, authHeader, talentGraphQLEndpoint);
 
     if (!userData?.radar_positionsSearch?.edges || userData.radar_positionsSearch.edges.length === 0) {
       return collaborators;
@@ -1347,7 +1411,7 @@ async function getCollaboratorsList(userEmail, relationshipType, cloudId) {
       rql: searchRQL
     };
     
-    const collaboratorsData = await queryTalentGraphQL(collaboratorsQuery, collaboratorsVariables);
+    const collaboratorsData = await queryTalentGraphQL(collaboratorsQuery, collaboratorsVariables, authHeader, talentGraphQLEndpoint);
 
     if (collaboratorsData?.radar_positionsSearch?.edges) {
       collaboratorsData.radar_positionsSearch.edges.forEach(edge => {
