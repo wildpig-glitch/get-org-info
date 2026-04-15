@@ -9,26 +9,33 @@ import api, { route } from '@forge/api';
  * @returns {string} The site domain (e.g., "sk-demo-site.atlassian.net")
  */
 function extractSiteDomain(request) {
+  console.log('DEBUG: extractSiteDomain - Full request context:', JSON.stringify(request?.context, null, 2));
+  
   const jiraUrl = request?.context?.jira?.url;
+  console.log('DEBUG: extractSiteDomain - jiraUrl:', jiraUrl);
   
   if (jiraUrl) {
     // Extract domain from URL like https://sk-demo-site.atlassian.net/browse/...
     const match = jiraUrl.match(/https?:\/\/([^\/]+)/);
     if (match && match[1]) {
+      console.log('DEBUG: extractSiteDomain - Found domain from jiraUrl:', match[1]);
       return match[1];
     }
   }
   
   // Fallback to tenantUrl if available
   const tenantUrl = request?.context?.tenantUrl;
+  console.log('DEBUG: extractSiteDomain - tenantUrl:', tenantUrl);
   if (tenantUrl) {
     const match = tenantUrl.match(/https?:\/\/([^\/]+)/);
     if (match && match[1]) {
+      console.log('DEBUG: extractSiteDomain - Found domain from tenantUrl:', match[1]);
       return match[1];
     }
   }
   
   // Default fallback
+  console.log('DEBUG: extractSiteDomain - Using default fallback: one-atlas-jevs.atlassian.net');
   return 'one-atlas-jevs.atlassian.net';
 }
 
@@ -1127,7 +1134,7 @@ export async function getAllUserDetails(request) {
     
     try {
       const authHeaderDR = createBasicAuthHeader(authEmail, apiToken);
-      const directReportsResponse = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+      const directReportsResponse = await fetch(talentGraphQLEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1212,7 +1219,7 @@ export async function getAllUserDetails(request) {
       
       try {
         const authHeaderPeers = createBasicAuthHeader(authEmail, apiToken);
-        const peersResponse = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+        const peersResponse = await fetch(talentGraphQLEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1434,9 +1441,13 @@ export async function getCollaborators(request) {
         rql: `workerEmail = '${userEmail}'`
       };
       
+      // Build the Talent GraphQL endpoint based on the site domain
+      const siteDomain = extractSiteDomain(request);
+      const talentGraphQLEndpoint = buildTalentGraphQLEndpoint(siteDomain);
+
       const authHeader = createBasicAuthHeader(authEmail, apiToken);
       
-      const response = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+      const response = await fetch(talentGraphQLEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1486,7 +1497,7 @@ export async function getCollaborators(request) {
         
         // Fetch manager details with position titles
         try {
-          collaborators = await fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId, authEmail, apiToken);
+          collaborators = await fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId, authEmail, apiToken, talentGraphQLEndpoint);
         } catch (error) {
           console.error('ERROR: Error fetching manager details:', error.message);
           return {
@@ -1508,10 +1519,14 @@ export async function getCollaborators(request) {
         };
       }
       
+      // Build the Talent GraphQL endpoint based on the site domain
+      const siteDomain = extractSiteDomain(request);
+      const talentGraphQLEndpoint = buildTalentGraphQLEndpoint(siteDomain);
+
       if (relationship === 'direct_reports') {
-        collaborators = await getCollaboratorsList(userEmail, 'direct_reports', cloudId, authEmail, apiToken);
+        collaborators = await getCollaboratorsList(userEmail, 'direct_reports', cloudId, authEmail, apiToken, talentGraphQLEndpoint);
       } else if (relationship === 'peers') {
-        collaborators = await getCollaboratorsList(userEmail, 'peers', cloudId, authEmail, apiToken);
+        collaborators = await getCollaboratorsList(userEmail, 'peers', cloudId, authEmail, apiToken, talentGraphQLEndpoint);
       }
     }
     
@@ -1556,7 +1571,7 @@ export async function getCollaborators(request) {
 /**
  * Helper function to fetch manager details including position title.
  */
-async function fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId, authEmail, apiToken) {
+async function fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId, authEmail, apiToken, talentGraphQLEndpoint) {
   const managers = [];
   
   for (const managerData of managerUUIDs) {
@@ -1600,7 +1615,7 @@ async function fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId, authE
       };
       
       const authHeader = createBasicAuthHeader(authEmail, apiToken);
-      const response = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+      const response = await fetch(talentGraphQLEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1648,7 +1663,7 @@ async function fetchManagerDetailsWithPositionTitle(managerUUIDs, cloudId, authE
 /**
  * Helper function to retrieve collaborators list (direct reports or peers) with position titles.
  */
-async function getCollaboratorsList(userEmail, relationshipType, cloudId, authEmail, apiToken) {
+async function getCollaboratorsList(userEmail, relationshipType, cloudId, authEmail, apiToken, talentGraphQLEndpoint) {
   const collaborators = [];
   
   try {
@@ -1685,7 +1700,7 @@ async function getCollaboratorsList(userEmail, relationshipType, cloudId, authEm
     };
     
     const authHeader = createBasicAuthHeader(authEmail, apiToken);
-    const userResponse = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+    const userResponse = await fetch(talentGraphQLEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1772,7 +1787,7 @@ async function getCollaboratorsList(userEmail, relationshipType, cloudId, authEm
       rql: searchRQL
     };
     
-    const collaboratorsResponse = await fetch(TALENT_GRAPHQL_ENDPOINT, {
+    const collaboratorsResponse = await fetch(talentGraphQLEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
